@@ -1,0 +1,19 @@
+{
+  "name": "resumeverify",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "db:up": "docker compose up -d db",
+    "db:migrate": "npm run prisma:migrate -w @resumeverify/api",
+    "db:deploy": "npm run prisma:deploy -w @resumeverify/api",
+    "dev:api": "npm run dev -w @resumeverify/api",
+    "dev:web": "npm run dev -w @resumeverify/web",
+    "check:env": "npm run check:env -w @resumeverify/api",
+    "build": "npm run build -w @resumeverify/api && npm run build -w @resumeverify/web",
+    "test": "npm test -w @resumeverify/api",
+    "lint": "npm run lint -w @resumeverify/api && npm run lint -w @resumeverify/web",
+    "samples:pdf": "npm run samples:pdf -w @resumeverify/api",
+    "smoke:live": "npm run smoke:live -w @resumeverify/api"
+  }
+}

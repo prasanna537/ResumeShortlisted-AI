@@ -1,0 +1,352 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+enum ClaimCategory {
+  SKILL
+  EXPERIENCE
+  PROJECT
+  EDUCATION
+  CERTIFICATION
+  OTHER
+}
+
+enum Verdict {
+  VERIFIED
+  PARTIAL
+  UNVERIFIED
+  CONTRADICTED
+}
+
+enum EvidenceSource {
+  RESUME
+  GITHUB
+  LINKEDIN
+  LEETCODE
+}
+
+enum ProfileProvider {
+  GITHUB
+  LINKEDIN
+  LEETCODE
+}
+
+enum DataOrigin {
+  OFFICIAL_API
+  CANDIDATE_PROVIDED
+  EXPORT
+}
+
+enum RequirementKind {
+  REQUIRED
+  PREFERRED
+}
+
+enum JobStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum AnalysisStatus {
+  UPLOADED
+  PARSING
+  EXTRACTING_CLAIMS
+  COLLECTING_EVIDENCE
+  GENERATING_EMBEDDINGS
+  VERIFYING
+  MATCHING_JD
+  CALCULATING_SCORE
+  COMPLETED
+  FAILED
+}
+
+enum ShortlistDecision {
+  SHORTLISTED
+  REJECTED
+  REVIEW
+}
+
+// Embeddings are 768-dim (Gemini embedding model with outputDimensionality=768).
+
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  passwordHash String
+  name         String
+  jobs         Job[]
+  candidates   Candidate[]
+  shortlists   Shortlist[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model Job {
+  id               String           @id @default(uuid())
+  userId           String
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title            String
+  company          String?
+  location         String?
+  experienceYears  Float?
+  description      String
+  education        String?
+  responsibilities String[]
+  keywords         String[]
+  status           JobStatus        @default(ACTIVE)
+  requirements     JobRequirement[]
+  candidates       Candidate[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([userId])
+}
+
+model JobRequirement {
+  id             String                     @id @default(uuid())
+  jobId          String
+  job            Job                        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  kind           RequirementKind
+  skill          String
+  canonicalSkill String
+  embedding      Unsupported("vector(768)")?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  @@index([jobId])
+  @@index([canonicalSkill])
+}
+
+model Candidate {
+  id               String               @id @default(uuid())
+  userId           String
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId            String
+  job              Job                  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  name             String?
+  email            String?
+  phone            String?
+  consentGiven     Boolean              @default(false)
+  consentAt        DateTime?
+  recruiterNotes   String?
+  resumes          Resume[]
+  claims           ResumeClaim[]
+  evidence         Evidence[]
+  externalProfiles ExternalProfile[]
+  verifications    VerificationResult[]
+  scores           CandidateScore[]
+  shortlist        Shortlist?
+  analysisJobs     AnalysisJob[]
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([userId])
+  @@index([jobId])
+}
+
+model Resume {
+  id             String        @id @default(uuid())
+  candidateId    String
+  candidate      Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  fileHash       String
+  storagePath    String
+  extractedText  String?
+  structuredData Json?
+  claims         ResumeClaim[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([candidateId])
+}
+
+model ResumeClaim {
+  id             String                     @id @default(uuid())
+  candidateId    String
+  candidate      Candidate                  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  resumeId       String
+  resume         Resume                     @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  claimText      String
+  category       ClaimCategory
+  sourceLocation String?
+  confidence     Float
+  canonicalSkill String?
+  embedding      Unsupported("vector(768)")?
+  verification   VerificationResult?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  @@index([candidateId])
+  @@index([resumeId])
+  @@index([canonicalSkill])
+}
+
+model Evidence {
+  id                String                     @id @default(uuid())
+  candidateId       String
+  candidate         Candidate                  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  source            EvidenceSource
+  sourceUrl         String?
+  evidenceType      String
+  evidenceText      String
+  canonicalSkill    String?
+  metadata          Json?
+  collectedAt       DateTime                   @default(now())
+  githubRepoId      String?
+  githubRepo        GithubRepository?          @relation(fields: [githubRepoId], references: [id], onDelete: SetNull)
+  embedding         Unsupported("vector(768)")?
+  verificationLinks VerificationEvidence[]
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  @@index([candidateId])
+  @@index([source])
+  @@index([canonicalSkill])
+}
+
+model ExternalProfile {
+  id           String          @id @default(uuid())
+  candidateId  String
+  candidate    Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  provider     ProfileProvider
+  url          String
+  username     String?
+  origin       DataOrigin      @default(CANDIDATE_PROVIDED)
+  consentGiven Boolean         @default(false)
+  rawData      Json?
+  collectedAt  DateTime?
+  lastError    String?
+  github       GithubProfile?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@unique([candidateId, provider])
+  @@index([candidateId])
+}
+
+model GithubProfile {
+  id                String             @id @default(uuid())
+  externalProfileId String             @unique
+  externalProfile   ExternalProfile    @relation(fields: [externalProfileId], references: [id], onDelete: Cascade)
+  username          String
+  name              String?
+  bio               String?
+  publicRepos       Int
+  // Stored for display only; never used as proof of skill.
+  followers         Int?
+  accountCreatedAt  DateTime?
+  rawData           Json
+  repositories      GithubRepository[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([username])
+}
+
+model GithubRepository {
+  id              String        @id @default(uuid())
+  githubProfileId String
+  githubProfile   GithubProfile @relation(fields: [githubProfileId], references: [id], onDelete: Cascade)
+  name            String
+  url             String
+  description     String?
+  languages       Json?
+  topics          String[]
+  readmeExcerpt   String?
+  isFork          Boolean       @default(false)
+  repoCreatedAt   DateTime?
+  repoPushedAt    DateTime?
+  rawData         Json
+  evidence        Evidence[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([githubProfileId])
+}
+
+model VerificationResult {
+  id            String                 @id @default(uuid())
+  candidateId   String
+  candidate     Candidate              @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  claimId       String                 @unique
+  claim         ResumeClaim            @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  verdict       Verdict
+  confidence    Float
+  reason        String
+  model         String?
+  promptVersion String?
+  evidence      VerificationEvidence[]
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  @@index([candidateId])
+  @@index([verdict])
+}
+
+model VerificationEvidence {
+  verificationId String
+  verification   VerificationResult @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+  evidenceId     String
+  evidence       Evidence           @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  similarity     Float?
+
+  @@id([verificationId, evidenceId])
+  @@index([evidenceId])
+}
+
+model CandidateScore {
+  id          String    @id @default(uuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobId       String
+  overall     Float
+  // requiredSkill, verifiedExperience, projectRelevance, technicalEvidence, consistency
+  components  Json
+  weightsUsed Json
+  // per-requirement match detail
+  breakdown   Json
+  explanation String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([candidateId])
+  @@index([jobId])
+}
+
+model Shortlist {
+  id          String            @id @default(uuid())
+  candidateId String            @unique
+  candidate   Candidate         @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  decision    ShortlistDecision @default(SHORTLISTED)
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([userId])
+}
+
+model AnalysisJob {
+  id          String         @id @default(uuid())
+  candidateId String
+  candidate   Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  status      AnalysisStatus @default(UPLOADED)
+  error       String?
+  warnings    Json?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([candidateId])
+  @@index([status])
+}
